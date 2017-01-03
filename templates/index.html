@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<script src="{{ url_for('static', filename='jquery-3.1.1.min.js') }}"></script>
+<script>
+	function fetch(data) {
+		console.log("request sent");
+		source.close();
+		$.ajax({
+		  type: "POST",
+		  data: "code="+data,
+		  url: "http://127.0.0.1:5000/process",
+		  error: function(query, textStaus, errorThrown){
+		  	var errStr = "<p style='color:red'><b>"+textStaus+":</b></p><br>"+errorThrown;
+		  	document.getElementById('results').innerHTML = errStr;
+		  	setTimeout(function(){
+		  		setSource();
+		  		var currStr = document.getElementById('results').innerHTML
+		  		if(currStr == errStr)
+			  		document.getElementById('results').innerHTML = "";
+		  	}, 5000);
+		  },
+		  success: function(data){
+		  	var succStr = "<p style='color:green'><b>Success!</b></p>";
+		  	document.getElementById('results').innerHTML = succStr;
+		  	setTimeout(function(){
+		  		setSource();
+		  		var currStr = document.getElementById('results').innerHTML
+		  		if(currStr == succStr)
+		  			document.getElementById('results').innerHTML = "";
+		  	}, 5000);
+		  }
+		});
+	}
+
+	function send(){
+		var code = document.getElementById('code').value;
+		fetch(encodeURIComponent(code));
+		document.getElementById('code').value = "";
+	}
+
+	//stream in results
+	var source;
+	function setSource(){
+		//if (!!window.EventSource) {
+		  source = new EventSource('/results');
+		  source.onmessage = function(e) {
+		  	console.log(e);
+		  	if(e.event!='heartbeat'){
+		  		if(e.data.substring(0, 9)=="{*clear*}")
+					document.getElementById('results').innerHTML = "";
+				else
+				    document.getElementById('results').innerHTML += e.data;
+		  	}
+		  }
+		//}
+	}
+	function closer(){
+		source.close();
+		console.log("Closed");
+	}
+	setSource();
+</script>
+<head>
+	<title>Client</title>
+</head>
+<body>
+	<div id="data">nothing received yet</div>
+
+<p id='results'>Default text</p>
+<textarea id='code'>{{ code }}</textarea>
+<button onclick="send()">Send</button>
+<button onclick="closer()">close</button>
+<br>
+<p id='status'></p>
+</body>
+</html>
