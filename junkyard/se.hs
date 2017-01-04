@@ -3,6 +3,8 @@
   FlexibleContexts #-}
 
 import Yesod
+import Yesod.Core
+import Data.Conduit
 import Yesod.Form.Jquery
 import Control.Concurrent.Chan (Chan, dupChan, writeChan, newChan)
 import Control.Concurrent (forkIO, threadDelay, killThread)
@@ -13,14 +15,15 @@ import Blaze.ByteString.Builder.Char.Utf8 (fromText, fromString)
 import Network.Wai.EventSource (ServerEvent (..), eventSourceAppChan)
 import Data.Monoid ((<>))
 import Control.Monad.Trans.Resource (runResourceT, register)
+import Control.Monad (forM_)
 
 data App = App (Chan ServerEvent)
 
-pageTitleText = "EventSource Cookbook example" :: Text
+pageTitleText = "Browser Haskell" :: Text
 
 mkYesod "App" [parseRoutes|
-/recv ReceiveR GET
-/setup SetupR GET
+/recv ReceiveR GET 
+/setup SetupR GET POST
 |]
 
 instance Yesod App where
@@ -45,15 +48,41 @@ instance Yesod App where
 -- We want a more recent jQuery version than the default.
 instance YesodJquery App where
     urlJqueryJs _ = Right $ "http://ajax.googleapis.com/"
-                      <> "ajax/libs/jquery/1.8.3/jquery.min.js"
+                    <>"ajax/libs/jquery/1.8.3/jquery.min.js"
+
+data CodeResponse = CodeResponse 
+     { codeStr :: Text
+     , append :: Bool
+     } deriving Show
 
 getReceiveR :: Handler TypedContent
 getReceiveR = do
   chan0 <- liftIO $ newChan
   tid <- liftIO $ forkIO $ talk chan0 0
-  chan <- liftIO $ dupChan chan0
   register . liftIO $ killThread tid
-  sendWaiApplication $ eventSourceAppChan chan
+  sendWaiApplication $ eventSourceAppChan chan0
+
+--postReceiveR :: Handler TypedContent
+--postReceiveR = do
+--  (rb, _) <- runRequstBody
+--  codeStr <- getCodeStrFromBody rb
+--  chan0 <- liftIO $ newChan
+--  tid <- liftIO $ forkIO $ runCode chan0 codeStr
+--  register . liftIO $ killThread tid
+--  sendWaiApplication $ eventSourceAppChan chan0
+
+postSetupR :: Handler TypedContent
+postSetupR = respondSource typePlain $ do 
+  --wr <- waiRequest
+  (rb,_) <- runRequestBody
+  forM_ rb $ \e -> do
+    sendChunkText $ fst $ e
+    sendChunkText $ "="
+    sendChunkText $ snd $ e
+    sendChunkText $ "\n"
+  yield Flush
+  sendFlush
+  --todo put the request into an <input> field
 
 getSetupR :: Handler Html
 getSetupR = do
@@ -62,33 +91,27 @@ getSetupR = do
               eventSourceW
 
 onlyEventName :: Text
-onlyEventName = "ev1"
+onlyEventName = "newFib"
 
 eventSourceW = do
   receptacle0 <- newIdent -- css id for output div 0
-  receptacle1 <- newIdent -- css id for output div 1
+  btn0 <- newIdent -- css id for output div 1
   [whamlet| $newline never
-            <div ##{receptacle0} .outdiv>^^ Unclassified output up here.
-            <div ##{receptacle1} .outdiv>^^ Output 1 up here.|]
-  -- the CSS for the above divs.
-  toWidget [lucius|
-           .outdiv
-           {
-             float:left;
-             width:400px;
-             font-family:courier,'courier new',sans-serif;
-           }
-         |]
+            <div ##{receptacle0}>Default text.
+            <button ##{btn0}>Click Here.|]
+
   -- the JavaScript ServerEvent handling code
   toWidget [julius|
             // setup the EventSource itself
             var source = new EventSource('/recv');
-
+            $('##{rawJS btn0}').on('click', function(){
+                console.log("clicked");
+              });
             // listener for first type of events
             source.addEventListener(#{toJSON onlyEventName}, function(event)
               {
                 $('##{rawJS receptacle0}')
-                     .prepend(makeEventString('Events, type 1', event));
+                     .html(makeEventString('Events, type 1', event));
               }, false);
 
             // listener for unclassified events
@@ -96,24 +119,25 @@ eventSourceW = do
               {
 
                 $('##{rawJS receptacle0}')
-                     .prepend(makeEventString('Events, unclassified', event));
+                     .html(makeEventString('Events, unclassified', event));
               };
 
             // just an output helper function
             function makeEventString(str, event)
               {
-                return str + ': <strong>' +
+                return '<strong>' +
                        event.data + ' </strong><br>';
               }
             |]
 
+fibs :: [Int]
+fibs = 1 : 1 : zipWith (+) fibs (tail fibs)
+
 talk :: Chan ServerEvent -> Int -> IO ()
 talk ch n = do
-  writeChan ch $ mkServerEvent "" n "Foo! "
-  threadDelay micros
-  writeChan ch $ mkServerEvent onlyEventName n "Bar! "
-  threadDelay micros
-  talk ch (n+1)
+  forM_ (zip [1..] fibs) $ \fib -> do
+    writeChan ch $ mkServerEvent "newFib" (snd fib) $ pack ("Fib"++(show . fst) fib++": ")
+    threadDelay micros
     where micros = 1*(10^6)
           mkServerEvent evName evId evData =
               let mEvName = case evName of
