@@ -5,14 +5,14 @@
 import Yesod
 import Yesod.Form.Jquery
 import Control.Concurrent.Chan (Chan, dupChan, writeChan, newChan)
-import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent (forkIO, threadDelay, killThread)
 import Data.Text (Text, pack)
 import Text.Julius (rawJS)
 import Blaze.ByteString.Builder.ByteString
 import Blaze.ByteString.Builder.Char.Utf8 (fromText, fromString)
 import Network.Wai.EventSource (ServerEvent (..), eventSourceAppChan)
 import Data.Monoid ((<>))
-import Control.Monad.Trans.Resource (runResourceT)
+import Control.Monad.Trans.Resource (runResourceT, register)
 
 data App = App (Chan ServerEvent)
 
@@ -50,8 +50,9 @@ instance YesodJquery App where
 getReceiveR :: Handler TypedContent
 getReceiveR = do
   App chan0 <- getYesod
-  liftIO $ forkIO $ talk chan0 0
+  tid <- liftIO $ forkIO $ talk chan0 0
   chan <- liftIO $ dupChan chan0
+  register . liftIO $ killThread tid
   sendWaiApplication $ eventSourceAppChan chan
 
 getSetupR :: Handler Html
