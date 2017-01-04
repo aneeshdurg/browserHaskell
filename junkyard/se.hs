@@ -49,7 +49,7 @@ instance YesodJquery App where
 
 getReceiveR :: Handler TypedContent
 getReceiveR = do
-  App chan0 <- getYesod
+  chan0 <- liftIO $ newChan
   tid <- liftIO $ forkIO $ talk chan0 0
   chan <- liftIO $ dupChan chan0
   register . liftIO $ killThread tid
