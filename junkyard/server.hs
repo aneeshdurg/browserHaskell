@@ -7,7 +7,7 @@ import Yesod.Core
 import Data.Conduit
 import Yesod.Form.Jquery
 import Control.Concurrent.Chan (Chan, dupChan, writeChan, newChan)
-import Control.Concurrent (forkIO, threadDelay, killThread)
+import Control.Concurrent (forkOS, threadDelay, killThread)
 import Data.Text (Text, pack)
 import Text.Julius (rawJS)
 import Blaze.ByteString.Builder.ByteString
@@ -22,6 +22,7 @@ data App = App (Chan ServerEvent)
 pageTitleText = "Browser Haskell" :: Text
 
 mkYesod "App" [parseRoutes|
+/localhost LocalR GET
 /recv ReceiveR GET 
 /setup SetupR GET POST
 |]
@@ -33,7 +34,7 @@ instance Yesod App where
                        widget
                        addScriptEither (urlJqueryJs appFoundation)
       mmsg <- getMessage
-      giveUrlRenderer [hamlet| $newline never
+      withUrlRenderer [hamlet| $newline never
                        $doctype 5
                        <html>
                          <head>
@@ -55,11 +56,16 @@ data CodeResponse = CodeResponse
      , append :: Bool
      } deriving Show
 
+getLocalR :: Handler TypedContent
+getLocalR = return $ TypedContent "text" $ toContent $ ("browserHaskell-localhost" :: [Char])
+
 getReceiveR :: Handler TypedContent
 getReceiveR = do
   chan0 <- liftIO $ newChan
-  tid <- liftIO $ forkIO $ talk chan0 0
-  register . liftIO $ killThread tid
+  tid <- liftIO $ forkOS $ talk chan0 0
+  register . liftIO $ do 
+    putStrLn "Connection closed by client"
+    killThread tid
   sendWaiApplication $ eventSourceAppChan chan0
 
 --postReceiveR :: Handler TypedContent
@@ -88,17 +94,19 @@ getSetupR :: Handler Html
 getSetupR = do
   defaultLayout $ do
               setTitle $ toHtml pageTitleText
-              eventSourceW
+              eventSourceW ("test" :: [Char])
 
 onlyEventName :: Text
 onlyEventName = "newFib"
 
-eventSourceW = do
+eventSourceW str = do
   receptacle0 <- newIdent -- css id for output div 0
   btn0 <- newIdent -- css id for output div 1
   [whamlet| $newline never
             <div ##{receptacle0}>Default text.
-            <button ##{btn0}>Click Here.|]
+            <button ##{btn0}>Click Here.
+            <br>
+            <textarea>#{str}|]
 
   -- the JavaScript ServerEvent handling code
   toWidget [julius|
@@ -149,4 +157,5 @@ talk ch n = do
 
 main = do
     ch <- newChan
+    putStrLn "http://127.0.0.1:3000/setup"
     warp 3000 $ App ch
