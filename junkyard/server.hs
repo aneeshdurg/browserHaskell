@@ -7,15 +7,22 @@ import Yesod.Core
 import Data.Conduit
 import Yesod.Form.Jquery
 import Control.Concurrent.Chan (Chan, dupChan, writeChan, newChan)
-import Control.Concurrent (forkOS, threadDelay, killThread)
+import Control.Concurrent (forkOS, forkIO, threadDelay, killThread)
 import Data.Text (Text, pack, unpack)
 import Text.Julius (rawJS)
 import Blaze.ByteString.Builder.ByteString
 import Blaze.ByteString.Builder.Char.Utf8 (fromText, fromString)
 import Network.Wai.EventSource (ServerEvent (..), eventSourceAppChan)
 import Data.Monoid ((<>))
+
 import Control.Monad.Trans.Resource (runResourceT, register)
-import Control.Monad (forM_)
+import Control.Monad
+import Control.Monad.Loops
+
+import System.IO
+import System.Posix.IO
+import System.Posix.Process 
+import qualified System.Process as P
 
 data App = App (Chan ServerEvent)
 
@@ -23,7 +30,7 @@ pageTitleText = "Browser Haskell" :: Text
 
 mkYesod "App" [parseRoutes|
 /localhost LocalR GET
-/recv ReceiveR GET 
+/recv ReceiveR GET POST
 /editor EditorR GET POST
 |]
 
@@ -56,9 +63,12 @@ data CodeResponse = CodeResponse
      , append :: Bool
      } deriving Show
 
+--Allows client to check if server is running locally
 getLocalR :: Handler TypedContent
-getLocalR = return $ TypedContent "text" $ toContent $ ("browserHaskell-localhost" :: [Char])
+getLocalR = return $ TypedContent "text" $ toContent $ 
+  ("browserHaskell-localhost" :: [Char])
 
+--todo remove this function, no need for get here
 getReceiveR :: Handler TypedContent
 getReceiveR = do
   chan0 <- liftIO $ newChan
@@ -70,15 +80,43 @@ getReceiveR = do
 
 postReceiveR :: Handler TypedContent
 postReceiveR = do
+  chan0 <- liftIO $ newChan
+  (rb,_) <- runRequestBody
+  --todo actually get the right data from the request
+  let strData = map (\(x, y) -> (unpack x, unpack y)) rb
+  let inpStr = snd . head $ strData
+  --todo make a function to modify input str such that
+  --  Only certain libraries are imported
+  --  stdout is not buffered
+  --todo make a uniqe file name perclient
+  h <- liftIO $ openFile "needsUniqueFile.hs" WriteMode
+  liftIO $ hPutStr h inpStr
+  liftIO $ hClose h
+
+  (_, Just hOut, _, p) <- 
+    liftIO $ P.createProcess (P.shell "runhaskell needsUniqueFile.hs"){ P.std_out = P.CreatePipe }
+
+  liftIO $ hSetBuffering hOut NoBuffering
+
+  tid <- liftIO $ forkIO $ getOutput chan0 hOut
   --todo extract code from the request
   --todo use something likes pipes.hs to process code
-  --todo figure out how to pipe input...
-  chan0 <- liftIO $ newChan
-  tid <- liftIO $ forkOS $ talk chan0 0
+  --todo figure out how get input...need to make sure that I can pass this pipe on somwhere
   register . liftIO $ do 
     putStrLn "Connection closed by client"
     killThread tid
+    --todo clean up process spawned
+    --  e <- P.waitForProcess p
+    --  p.killprocess p
   sendWaiApplication $ eventSourceAppChan chan0
+
+getOutput :: Chan ServerEvent -> Handle -> IO ()
+getOutput ch hOut= do
+  forever $ do
+  l <- hGetContents hOut
+  writeChan ch $ 
+    ServerEvent (Just $ fromText "result") (Just $ fromText "0") [(fromString l <> fromString "0")]
+
 
 postEditorR :: Handler Html
 postEditorR = do
@@ -86,18 +124,19 @@ postEditorR = do
               setTitle $ toHtml pageTitleText
               (rb,_) <- runRequestBody
               let strData = map (\(x, y) -> (unpack x, unpack y)) rb
-              --let realData = filter (\x = fst x == "code") strData
               liftIO $ print strData
               if fst (head strData) == "code" then 
                 eventSourceW $ snd . head $ strData 
-              else eventSourceW ("test" :: [Char])
+              else eventSourceW ("--Enter Code Here!" :: [Char])
 
 getEditorR :: Handler Html
 getEditorR = do
   defaultLayout $ do
               setTitle $ toHtml pageTitleText
-              eventSourceW ("test" :: [Char])
+              eventSourceW ("--Enter Code Here!" :: [Char])
 
+--todo modify the following html/css/js to make it 
+--suitable for the application
 onlyEventName :: Text
 onlyEventName = "newFib"
 
@@ -140,6 +179,7 @@ eventSourceW str = do
               }
             |]
 
+--todo get rid of the following 'placeholder' fuctions
 fibs :: [Int]
 fibs = 1 : 1 : zipWith (+) fibs (tail fibs)
 
@@ -157,7 +197,8 @@ talk ch n = do
                   evPayload = [(fromText evData <> fromString (show evId))]
               in ServerEvent mEvName mEvId evPayload
 
+--todo figure out if I can usethe global channel for something
 main = do
     ch <- newChan
-    putStrLn "http://127.0.0.1:3000/editor"
+    putStrLn "Now running on http://127.0.0.1:3000/editor"
     warp 3000 $ App ch
