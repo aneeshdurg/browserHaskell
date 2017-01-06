@@ -8,7 +8,7 @@ import Data.Conduit
 import Yesod.Form.Jquery
 import Control.Concurrent.Chan (Chan, dupChan, writeChan, newChan)
 import Control.Concurrent (forkOS, threadDelay, killThread)
-import Data.Text (Text, pack)
+import Data.Text (Text, pack, unpack)
 import Text.Julius (rawJS)
 import Blaze.ByteString.Builder.ByteString
 import Blaze.ByteString.Builder.Char.Utf8 (fromText, fromString)
@@ -24,7 +24,7 @@ pageTitleText = "Browser Haskell" :: Text
 mkYesod "App" [parseRoutes|
 /localhost LocalR GET
 /recv ReceiveR GET 
-/setup SetupR GET POST
+/editor EditorR GET POST
 |]
 
 instance Yesod App where
@@ -68,30 +68,32 @@ getReceiveR = do
     killThread tid
   sendWaiApplication $ eventSourceAppChan chan0
 
---postReceiveR :: Handler TypedContent
---postReceiveR = do
---  (rb, _) <- runRequstBody
---  codeStr <- getCodeStrFromBody rb
---  chan0 <- liftIO $ newChan
---  tid <- liftIO $ forkIO $ runCode chan0 codeStr
---  register . liftIO $ killThread tid
---  sendWaiApplication $ eventSourceAppChan chan0
+postReceiveR :: Handler TypedContent
+postReceiveR = do
+  --todo extract code from the request
+  --todo use something likes pipes.hs to process code
+  --todo figure out how to pipe input...
+  chan0 <- liftIO $ newChan
+  tid <- liftIO $ forkOS $ talk chan0 0
+  register . liftIO $ do 
+    putStrLn "Connection closed by client"
+    killThread tid
+  sendWaiApplication $ eventSourceAppChan chan0
 
-postSetupR :: Handler TypedContent
-postSetupR = respondSource typePlain $ do 
-  --wr <- waiRequest
-  (rb,_) <- runRequestBody
-  forM_ rb $ \e -> do
-    sendChunkText $ fst $ e
-    sendChunkText $ "="
-    sendChunkText $ snd $ e
-    sendChunkText $ "\n"
-  yield Flush
-  sendFlush
-  --todo put the request into an <input> field
+postEditorR :: Handler Html
+postEditorR = do
+  defaultLayout $ do
+              setTitle $ toHtml pageTitleText
+              (rb,_) <- runRequestBody
+              let strData = map (\(x, y) -> (unpack x, unpack y)) rb
+              --let realData = filter (\x = fst x == "code") strData
+              liftIO $ print strData
+              if fst (head strData) == "code" then 
+                eventSourceW $ snd . head $ strData 
+              else eventSourceW ("test" :: [Char])
 
-getSetupR :: Handler Html
-getSetupR = do
+getEditorR :: Handler Html
+getEditorR = do
   defaultLayout $ do
               setTitle $ toHtml pageTitleText
               eventSourceW ("test" :: [Char])
@@ -103,10 +105,10 @@ eventSourceW str = do
   receptacle0 <- newIdent -- css id for output div 0
   btn0 <- newIdent -- css id for output div 1
   [whamlet| $newline never
-            <div ##{receptacle0}>Default text.
-            <button ##{btn0}>Click Here.
+            <div ##{receptacle0}>Results.
+            <textarea>#{str}
             <br>
-            <textarea>#{str}|]
+            <button ##{btn0}>Send Code.|]
 
   -- the JavaScript ServerEvent handling code
   toWidget [julius|
@@ -157,5 +159,5 @@ talk ch n = do
 
 main = do
     ch <- newChan
-    putStrLn "http://127.0.0.1:3000/setup"
+    putStrLn "http://127.0.0.1:3000/editor"
     warp 3000 $ App ch
