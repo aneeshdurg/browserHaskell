@@ -65,8 +65,10 @@ data CodeResponse = CodeResponse
 
 --Allows client to check if server is running locally
 getLocalR :: Handler TypedContent
-getLocalR = return $ TypedContent "text" $ toContent $ 
-  ("browserHaskell-localhost" :: [Char])
+getLocalR = do
+  addHeader "Access-Control-Allow-Origin" "*"
+  return $ TypedContent "text" $ toContent $ 
+    ("browserHaskell-localhost" :: [Char])
 
 --todo remove this function, no need for get here
 getReceiveR :: Handler TypedContent
@@ -113,9 +115,9 @@ postReceiveR = do
 getOutput :: Chan ServerEvent -> Handle -> IO ()
 getOutput ch hOut= do
   forever $ do
-  l <- hGetContents hOut
-  writeChan ch $ 
-    ServerEvent (Just $ fromText "result") (Just $ fromText "0") [(fromString l <> fromString "0")]
+    l <- hGetChar hOut
+    writeChan ch $ 
+      ServerEvent (Just $ fromText "result") (Just $ fromText "0") [(fromString (l:[]) <> fromString "0")]
 
 
 postEditorR :: Handler Html

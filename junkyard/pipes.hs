@@ -23,6 +23,8 @@ main = do
     e <- P.waitForProcess p
     killThread tid1
     killThread tid0
+    hClose hIn
+    hClose hOut
     print e
     return ()
 
@@ -33,7 +35,8 @@ getInput hIn = do
 
 getOutput hOut = do  
     forever $ do 
-        putStrLn "Getting input"
-        hGetContents hOut >>= putStrLn
+        --putStrLn "Getting input"
+        hGetChar hOut >>= putChar
+        putStr "!"
         --(l, _) <- fdRead hOut 100
         --print l 

@@ -6,14 +6,29 @@ function sendCode(info, append)
 
 function fetch(data, append) {
 	var a = append ? encodeURIComponent("{**haskAppend=true**}"):"";
-	$.ajax({
-	  type: "POST",
-	  data: "code="+a+data,
-	  url: "http://127.0.0.1:5000/editor",
-	  success: function(data){
- 		chrome.tabs.create({url: "http://127.0.0.1:5000/editor"})
-	  	//document.getElementById('status').innerHTML = data;
-	  	//fetch();
+
+    //check if the server is running on localhost
+    $.ajax({
+	  type: "GET",
+	  url: "http://127.0.0.1:3000/localhost",
+	  success: function(valid){
+ 		
+        if ( valid == "browserHaskell-localhost" ){  
+            //create form
+            var form = $('<form></form>');
+            form.attr("method", "post")
+            form.attr("action", "http://127.0.0.1:3000/editor");
+            //open new tab
+            form.attr("target", "_blank");
+            //append data
+            var field = $('<input></input>');
+            field.attr("type", "hidden");
+            field.attr("name", "code");
+            field.attr("value", data);
+            //submit form
+            form.append(field);
+            $(form).appendTo("body").submit();
+        }
 	  }
 	});
 }
