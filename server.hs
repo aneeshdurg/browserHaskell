@@ -101,7 +101,7 @@ runCode = do
   liftIO $ hClose h
 
   (_, Just hOut, _, p) <- 
-    liftIO $ P.createProcess (P.shell "echo testing"){ P.std_out = P.CreatePipe }
+    liftIO $ P.createProcess (P.shell "runhaskell needsUniqueFile.hs"){ P.std_out = P.CreatePipe }
 
   liftIO $ hSetBuffering hOut NoBuffering
 
