@@ -4,7 +4,10 @@
 
 import Yesod
 import Yesod.Core
-import Data.Conduit
+import Yesod.WebSockets
+import Conduit
+
+--import Data.Conduit
 import Yesod.Form.Jquery
 import Control.Concurrent.Chan (Chan, dupChan, writeChan, newChan)
 import Control.Concurrent (forkOS, forkIO, threadDelay, killThread)
@@ -30,7 +33,7 @@ pageTitleText = "Browser Haskell" :: Text
 
 mkYesod "App" [parseRoutes|
 /localhost LocalR GET
-/recv ReceiveR GET POST
+/recv ReceiveR GET
 /editor EditorR GET POST
 |]
 
@@ -80,13 +83,15 @@ getReceiveR = do
     killThread tid
   sendWaiApplication $ eventSourceAppChan chan0
 
-postReceiveR :: Handler TypedContent
-postReceiveR = do
-  chan0 <- liftIO $ newChan
-  (rb,_) <- runRequestBody
+runCode :: WebSocketsT Handler ()
+runCode = do
+  --chan0 <- liftIO $ newChan
+  sendTextData ("Starting proces..." :: Text)
+  
+  code <- receiveData
   --todo actually get the right data from the request
-  let strData = map (\(x, y) -> (unpack x, unpack y)) rb
-  let inpStr = snd . head $ strData
+  let inpStr = unpack code
+  liftIO $ putStr inpStr
   --todo make a function to modify input str such that
   --  Only certain libraries are imported
   --  stdout is not buffered
@@ -96,21 +101,26 @@ postReceiveR = do
   liftIO $ hClose h
 
   (_, Just hOut, _, p) <- 
-    liftIO $ P.createProcess (P.shell "runhaskell needsUniqueFile.hs"){ P.std_out = P.CreatePipe }
+    liftIO $ P.createProcess (P.shell "echo testing"){ P.std_out = P.CreatePipe }
 
   liftIO $ hSetBuffering hOut NoBuffering
 
-  tid <- liftIO $ forkIO $ getOutput chan0 hOut
-  --todo extract code from the request
-  --todo use something likes pipes.hs to process code
-  --todo figure out how get input...need to make sure that I can pass this pipe on somwhere
-  register . liftIO $ do 
-    putStrLn "Connection closed by client"
-    killThread tid
+  --race_ ( do $ e <- P.waitForProcess p ) ( forever $ hGetChar hOut >>= (sendTextData . pack) )
+  forever $ do
+    l <- liftIO $ hGetChar hOut
+    sendTextData $ pack (l:[])
+
+  --tid <- liftIO $ forkIO $ getOutput chan0 hOut
+  ----todo extract code from the request
+  ----todo use something likes pipes.hs to process code
+  ----todo figure out how get input...need to make sure that I can pass this pipe on somwhere
+  --register . liftIO $ do 
+  --  putStrLn "Connection closed by client"
+  --  killThread tid
     --todo clean up process spawned
     --  e <- P.waitForProcess p
     --  p.killprocess p
-  sendWaiApplication $ eventSourceAppChan chan0
+  --sendWaiApplication $ eventSourceAppChan chan0
 
 getOutput :: Chan ServerEvent -> Handle -> IO ()
 getOutput ch hOut= do
@@ -133,6 +143,7 @@ postEditorR = do
 
 getEditorR :: Handler Html
 getEditorR = do
+  webSockets runCode
   defaultLayout $ do
               setTitle $ toHtml pageTitleText
               eventSourceW ("--Enter Code Here!" :: [Char])
@@ -146,39 +157,32 @@ eventSourceW str = do
   receptacle0 <- newIdent -- css id for output div 0
   btn0 <- newIdent -- css id for output div 1
   [whamlet| $newline never
-            <div ##{receptacle0}>Results.
-            <textarea>#{str}
+            <div ##{receptacle0}>
+            <textarea #input>#{str}
             <br>
             <button ##{btn0}>Send Code.|]
 
   -- the JavaScript ServerEvent handling code
   toWidget [julius|
-            // setup the EventSource itself
-            var source = new EventSource('/recv');
+            var url = document.URL;
+            var input = document.getElementById('input');
+
+            url = url.replace("http", "ws");
+            console.log(url);
+            var conn = new WebSocket(url);
+
+            $(window).on('beforeunload', function(){
+                conn.close();
+            });
+            conn.onmessage = function(e) {
+              $('##{rawJS receptacle0}').append(e.data);
+            }
+            
             $('##{rawJS btn0}').on('click', function(){
+                conn.send(input.value);
+                input.value = '';
                 console.log("clicked");
               });
-            // listener for first type of events
-            source.addEventListener(#{toJSON onlyEventName}, function(event)
-              {
-                $('##{rawJS receptacle0}')
-                     .html(makeEventString('Events, type 1', event));
-              }, false);
-
-            // listener for unclassified events
-            source.onmessage = function(event)
-              {
-
-                $('##{rawJS receptacle0}')
-                     .html(makeEventString('Events, unclassified', event));
-              };
-
-            // just an output helper function
-            function makeEventString(str, event)
-              {
-                return '<strong>' +
-                       event.data + ' </strong><br>';
-              }
             |]
 
 --todo get rid of the following 'placeholder' fuctions
