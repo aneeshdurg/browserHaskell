@@ -25,6 +25,7 @@ import Control.Monad.Loops
 import System.IO
 import System.Posix.IO
 import System.Posix.Process 
+import System.Exit ( ExitCode(ExitFailure) )
 import qualified System.Process as P
 
 data App = App (Chan ServerEvent)
@@ -33,8 +34,8 @@ pageTitleText = "Browser Haskell" :: Text
 
 mkYesod "App" [parseRoutes|
 /localhost LocalR GET
-/recv ReceiveR GET
 /editor EditorR GET POST
+/ HomeR GET
 |]
 
 instance Yesod App where
@@ -73,62 +74,49 @@ getLocalR = do
   return $ TypedContent "text" $ toContent $ 
     ("browserHaskell-localhost" :: [Char])
 
---todo remove this function, no need for get here
-getReceiveR :: Handler TypedContent
-getReceiveR = do
-  chan0 <- liftIO $ newChan
-  tid <- liftIO $ forkOS $ talk chan0 0
-  register . liftIO $ do 
-    putStrLn "Connection closed by client"
-    killThread tid
-  sendWaiApplication $ eventSourceAppChan chan0
-
 runCode :: WebSocketsT Handler ()
 runCode = do
-  --chan0 <- liftIO $ newChan
-  sendTextData ("Starting proces..." :: Text)
+  sendTextData ("Waiting for code..." :: Text)
   
   code <- receiveData
-  --todo actually get the right data from the request
+  sendTextData ("{*clear*}" :: Text)
+  
   let inpStr = unpack code
   liftIO $ putStr inpStr
-  --todo make a function to modify input str such that
+  --todo make a function to modify input str (maybe do this with js) such that
   --  Only certain libraries are imported
   --  stdout is not buffered
+
   --todo make a uniqe file name perclient
-  h <- liftIO $ openFile "needsUniqueFile.hs" WriteMode
-  liftIO $ hPutStr h inpStr
-  liftIO $ hClose h
+  liftIO $ do
+    h <- openFile "needsUniqueFile.hs" WriteMode
+    hPutStr h inpStr
+    hClose h
 
   (_, Just hOut, _, p) <- 
-    liftIO $ P.createProcess (P.shell "runhaskell needsUniqueFile.hs"){ P.std_out = P.CreatePipe }
+    liftIO $ P.createProcess (P.shell "timeout 5 runhaskell needsUniqueFile.hs"){ P.std_out = P.CreatePipe }
 
   liftIO $ hSetBuffering hOut NoBuffering
 
-  --race_ ( do $ e <- P.waitForProcess p ) ( forever $ hGetChar hOut >>= (sendTextData . pack) )
-  forever $ do
-    l <- liftIO $ hGetChar hOut
-    sendTextData $ pack (l:[])
+  --todo, get input from websocket
+  --todo display results differently
+  --todo catch eof
+  race_
+        (forever $ do
+          l <- liftIO $ hGetChar hOut
+          sendTextData $ pack (l:[]))
+        (do 
+          e <- liftIO $ P.waitForProcess p
+          case e of 
+            ExitFailure 124 -> do
+              sendTextData ("{*clear*}" :: Text)
+              sendTextData ("Program timed out! (>5s)\n" :: Text)
+            ExitFailure n -> do
+              sendTextData ("{*clear*}" :: Text)
+              sendTextData $ pack ("Program failed with exit code: "++show n++"\n")
+            _ -> sendTextData ("  --Done\n" :: Text)) 
 
-  --tid <- liftIO $ forkIO $ getOutput chan0 hOut
-  ----todo extract code from the request
-  ----todo use something likes pipes.hs to process code
-  ----todo figure out how get input...need to make sure that I can pass this pipe on somwhere
-  --register . liftIO $ do 
-  --  putStrLn "Connection closed by client"
-  --  killThread tid
-    --todo clean up process spawned
-    --  e <- P.waitForProcess p
-    --  p.killprocess p
-  --sendWaiApplication $ eventSourceAppChan chan0
-
-getOutput :: Chan ServerEvent -> Handle -> IO ()
-getOutput ch hOut= do
-  forever $ do
-    l <- hGetChar hOut
-    writeChan ch $ 
-      ServerEvent (Just $ fromText "result") (Just $ fromText "0") [(fromString (l:[]) <> fromString "0")]
-
+  runCode
 
 postEditorR :: Handler Html
 postEditorR = do
@@ -148,6 +136,17 @@ getEditorR = do
               setTitle $ toHtml pageTitleText
               eventSourceW ("--Enter Code Here!" :: [Char])
 
+getHomeR :: Handler Html
+getHomeR = do 
+  defaultLayout $ do
+    setTitle $ toHtml pageTitleText
+    homePage
+
+homePage = do
+  [whamlet| $newline never
+            Welcome to browserHaskell!|]
+
+
 --todo modify the following html/css/js to make it 
 --suitable for the application
 onlyEventName :: Text
@@ -164,6 +163,7 @@ eventSourceW str = do
 
   -- the JavaScript ServerEvent handling code
   toWidget [julius|
+            var isCode = false;
             var url = document.URL;
             var input = document.getElementById('input');
 
@@ -175,7 +175,11 @@ eventSourceW str = do
                 conn.close();
             });
             conn.onmessage = function(e) {
-              $('##{rawJS receptacle0}').append(e.data);
+              if(e.data=="{*clear*}")
+                $('##{rawJS receptacle0}').text("");
+              else{
+                $('##{rawJS receptacle0}').append(e.data.replace("\n", "<br>"));
+              }
             }
             
             $('##{rawJS btn0}').on('click', function(){
