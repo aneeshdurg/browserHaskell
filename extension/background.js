@@ -1,11 +1,11 @@
 function sendCode(info, append)
 {
-  var searchstring = encodeURIComponent(info.selectionText);
+  var searchstring = encodeURIComponent(info);
   fetch(searchstring, append);
 }
 
 function fetch(data, append) {
-	var a = append ? encodeURIComponent("{**haskAppend=true**}"):"";
+	//var a = append ? encodeURIComponent("{**haskAppend=true**}"):"";
 
     //check if the server is running on localhost
     $.ajax({
@@ -55,7 +55,9 @@ chrome.runtime.onInstalled.addListener(function() {
 
 chrome.contextMenus.onClicked.addListener(function(info, tab) {
     if (info.menuItemId === "haskMenu1") {
-    	sendCode(info);
+    	chrome.tabs.sendMessage(tab.id, {method: "getSelection"}, function(response){
+            sendCode(response.data);
+        });
     }
     if (info.menuItemId === "haskMenu2") {
     	sendCode(info, true);
