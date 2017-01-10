@@ -127,14 +127,17 @@ postEditorR = do
               liftIO $ print strData
               if fst (head strData) == "code" then 
                 eventSourceW $ snd . head $ strData 
-              else eventSourceW ("--Enter Code Here!" :: [Char])
+              else eventSourceW defaultMessage
 
 getEditorR :: Handler Html
 getEditorR = do
   webSockets runCode
   defaultLayout $ do
               setTitle $ toHtml pageTitleText
-              eventSourceW ("--Enter Code Here!" :: [Char])
+              eventSourceW defaultMessage
+
+defaultMessage :: String
+defaultMessage = "import System.IO\nmain = do\n    hSetBuffering stdout NoBuffering\n    --Enter Code Here!"
 
 getHomeR :: Handler Html
 getHomeR = do 
@@ -157,15 +160,16 @@ eventSourceW str = do
   btn0 <- newIdent -- css id for output div 1
   [whamlet| $newline never
             <div ##{receptacle0}>
-            <textarea #input>#{str}
+            <textarea #input style=resize:none cols=90 rows=50>#{str}
             <br>
-            <button ##{btn0}>Send Code.|]
+            <button ##{btn0}>Run|]
 
   -- the JavaScript ServerEvent handling code
   toWidget [julius|
             var isCode = false;
             var url = document.URL;
             var input = document.getElementById('input');
+            input.value = decodeURIComponent(input.value);
 
             url = url.replace("http", "ws");
             console.log(url);
@@ -184,7 +188,7 @@ eventSourceW str = do
             
             $('##{rawJS btn0}').on('click', function(){
                 conn.send(input.value);
-                input.value = '';
+                input.value = "--submitted code\n"+input.value;
                 console.log("clicked");
               });
             |]
