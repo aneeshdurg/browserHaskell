@@ -16,6 +16,10 @@ import Text.Julius (rawJS)
 import Blaze.ByteString.Builder.ByteString
 import Blaze.ByteString.Builder.Char.Utf8 (fromText, fromString)
 import Network.Wai.EventSource (ServerEvent (..), eventSourceAppChan)
+import Network.Wai (remoteHost)
+import Network.Socket.Internal (SockAddr(..))
+import Data.IP 
+
 import Data.Monoid ((<>))
 
 import Control.Monad.Trans.Resource (runResourceT, register)
@@ -27,6 +31,8 @@ import System.Posix.IO
 import System.Posix.Process 
 import System.Exit ( ExitCode(ExitFailure) )
 import qualified System.Process as P
+
+import System.Directory
 
 data App = App (Chan ServerEvent)
 
@@ -74,25 +80,34 @@ getLocalR = do
   return $ TypedContent "text" $ toContent $ 
     ("browserHaskell-localhost" :: [Char])
 
-runCode :: WebSocketsT Handler ()
-runCode = do
+--thanks stackoverflow:
+--http://stackoverflow.com/questions/33536054/yesod-get-client-ipv4-ipv6-adress
+sockAddrToIP :: SockAddr -> IP
+sockAddrToIP sockAddr = case sockAddr of
+    SockAddrInet _port hostAddress -> IPv4 $ fromHostAddress hostAddress
+    SockAddrInet6 _port _flowInfo hostAddress6 _scopeID -> IPv6 $ fromHostAddress6 hostAddress6
+
+runCode :: String -> WebSocketsT Handler ()
+runCode ip = do
   sendTextData ("Waiting for code..." :: Text)
   
   code <- receiveData
   sendTextData ("{*clear*}" :: Text)
   
   let inpStr = unpack code
+  let cleanIP = filter (`elem` ['0'..'9']) ip
+  liftIO $ putStrLn $ cleanIP
   liftIO $ putStr inpStr
   --todo make a function to modify input str (maybe do this with js) such that
   --  stdout is not buffered
 
   --todo make a uniqe file name perclient
   liftIO $ do
-    h <- openFile "temp/needsUniqueFile.hs" WriteMode
+    h <- openFile ("temp/"++cleanIP++".hs") WriteMode
     hPutStr h inpStr
     hClose h
   --todo programitcally set temp path
-  let command = "docker run -iv ~/Desktop/browserHaskell/temp:/workspace docker-haskell runhaskell /workspace/needsUniqueFile.hs" :: String
+  let command = "docker run -iv ~/Desktop/browserHaskell/temp:/workspace docker-haskell runhaskell /workspace/"++cleanIP++".hs" :: String
   (_, Just hOut, _, p) <- 
     liftIO $ P.createProcess (P.shell command){ P.std_out = P.CreatePipe }
 
@@ -104,9 +119,10 @@ runCode = do
   race_
         (forever $ do
           l <- liftIO $ hGetChar hOut
-          sendTextData $ pack (l:[]))
+          sendTextData $ pack (l:[])) 
         (do 
           e <- liftIO $ P.waitForProcess p
+
           case e of 
             ExitFailure 124 -> do
               sendTextData ("{*clear*}" :: Text)
@@ -116,7 +132,8 @@ runCode = do
               sendTextData $ pack ("Program failed with exit code: "++show n++"\n")
             _ -> sendTextData ("  --Done\n" :: Text)) 
 
-  runCode
+  liftIO $ removeFile $ "temp/"++cleanIP++".hs"
+  runCode ip
 
 postEditorR :: Handler Html
 postEditorR = do
@@ -131,7 +148,9 @@ postEditorR = do
 
 getEditorR :: Handler Html
 getEditorR = do
-  webSockets runCode
+  host <- remoteHost <$> waiRequest
+  let ip = show $ sockAddrToIP host
+  webSockets $ runCode ip
   defaultLayout $ do
               setTitle $ toHtml pageTitleText
               eventSourceW defaultMessage
