@@ -8,4 +8,4 @@ To test locally:
 + `./setup.sh`
 + `./server`
 
-Then either load the extension in chrome as an unpacked extension, or go to https://localhost:3000/editor
+Then either load the extension in chrome as an unpacked extension, or go to [http://localhost:3000/editor](http://127.0.0.1:3000/editor)
