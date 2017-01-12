@@ -84,17 +84,17 @@ runCode = do
   let inpStr = unpack code
   liftIO $ putStr inpStr
   --todo make a function to modify input str (maybe do this with js) such that
-  --  Only certain libraries are imported
   --  stdout is not buffered
 
   --todo make a uniqe file name perclient
   liftIO $ do
-    h <- openFile "needsUniqueFile.hs" WriteMode
+    h <- openFile "temp/needsUniqueFile.hs" WriteMode
     hPutStr h inpStr
     hClose h
-
+  --todo programitcally set temp path
+  let command = "docker run -iv ~/Desktop/browserHaskell/temp:/workspace docker-haskell runhaskell /workspace/needsUniqueFile.hs" :: String
   (_, Just hOut, _, p) <- 
-    liftIO $ P.createProcess (P.shell "timeout 5 runhaskell needsUniqueFile.hs"){ P.std_out = P.CreatePipe }
+    liftIO $ P.createProcess (P.shell command){ P.std_out = P.CreatePipe }
 
   liftIO $ hSetBuffering hOut NoBuffering
 
