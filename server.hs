@@ -4,8 +4,8 @@
 
 import Yesod
 import Yesod.Core
-import Yesod.WebSockets
-import Conduit
+import Yesod.WebSockets 
+import Conduit 
 
 --import Data.Conduit
 import Yesod.Form.Jquery
@@ -33,6 +33,7 @@ import System.Exit ( ExitCode(ExitFailure) )
 import qualified System.Process as P
 
 import System.Directory
+import qualified Control.Concurrent.Async.Lifted as Async
 
 data App = App (Chan ServerEvent)
 
@@ -108,32 +109,48 @@ runCode ip = do
     hClose h
   --todo programitcally set temp path
   let command = "docker run -iv ~/Desktop/browserHaskell/temp:/workspace docker-haskell runhaskell /workspace/"++cleanIP++".hs" :: String
-  (_, Just hOut, _, p) <- 
-    liftIO $ P.createProcess (P.shell command){ P.std_out = P.CreatePipe }
+  (Just hIn, Just hOut, _, p) <- 
+    liftIO $ P.createProcess (P.shell command){ P.std_out = P.CreatePipe
+                                              , P.std_in = P.CreatePipe }
 
   liftIO $ hSetBuffering hOut NoBuffering
+  liftIO $ hSetBuffering hIn NoBuffering
 
-  --todo, get input from websocket
-  --todo display results differently
-  --todo catch eof
-  race_
-        (forever $ do
+  --todo support for stderr
+  reader <- Async.async (whileM_ (fmap not $ liftIO . hIsEOF $ hOut) $ do
           l <- liftIO $ hGetChar hOut
-          sendTextData $ pack (l:[])) 
-        (do 
-          e <- liftIO $ P.waitForProcess p
+          sendTextData $ pack (l:[])
+          return ()) 
+  writer <- Async.async $ myInp hIn  
 
-          case e of 
-            ExitFailure 124 -> do
-              sendTextData ("{*clear*}" :: Text)
-              sendTextData ("Program timed out! (>5s)\n" :: Text)
-            ExitFailure n -> do
-              sendTextData ("{*clear*}" :: Text)
-              sendTextData $ pack ("Program failed with exit code: "++show n++"\n")
-            _ -> sendTextData ("  --Done\n" :: Text)) 
+  Async.wait reader
+
+  e <- liftIO $ P.waitForProcess p
+  case e of 
+    ExitFailure 124 -> do
+      sendTextData ("{*clear*}" :: Text)
+      sendTextData ("Program timed out! (>5s)\n" :: Text)
+    ExitFailure n -> do
+      sendTextData ("{*clear*}" :: Text)
+      sendTextData $ pack ("Program failed with exit code: "++show n++"\n")
+    _ -> do 
+      return ()
+  sendTextData ("  --Done\n" :: Text) 
+
+  Async.wait writer
 
   liftIO $ removeFile $ "temp/"++cleanIP++".hs"
   runCode ip
+
+myInp hIn = do 
+  newInp <- receiveData
+  let newInpStr = unpack newInp
+  case newInpStr of
+    "{*--EOF--*}" -> return()
+    _ -> do
+      liftIO $ putStrLn newInpStr
+      liftIO $ hPutStrLn hIn newInpStr
+      myInp hIn
 
 postEditorR :: Handler Html
 postEditorR = do
@@ -179,16 +196,23 @@ eventSourceW str = do
   btn0 <- newIdent -- css id for output div 1
   [whamlet| $newline never
             <div ##{receptacle0}>
+            <form #form>
+              <input #ioinput>
             <textarea #input style=resize:none cols=90 rows=50>#{str}
             <br>
-            <button ##{btn0}>Run|]
+            <button ##{btn0}>Run
+              |]
 
   -- the JavaScript ServerEvent handling code
   toWidget [julius|
             var isCode = false;
             var url = document.URL;
+            var form = document.getElementById('form');
+            var io = document.getElementById('ioinput');
             var input = document.getElementById('input');
             input.value = decodeURIComponent(input.value);
+
+            var sent = false;
 
             url = url.replace("http", "ws");
             console.log(url);
@@ -198,6 +222,11 @@ eventSourceW str = do
                 conn.close();
             });
             conn.onmessage = function(e) {
+              if(e.data=="  --Done\n"){
+                sent = false;
+                conn.send("{*--EOF--*}");
+                $('##{rawJS btn0}').prop('disabled', false);
+              }
               if(e.data=="{*clear*}")
                 $('##{rawJS receptacle0}').text("");
               else{
@@ -205,10 +234,20 @@ eventSourceW str = do
               }
             }
             
+            form.addEventListener("submit", function(e){
+                e.preventDefault();
+                if(sent){ 
+                  conn.send(io.value);
+                  io.value = '';
+                }
+            });
+
             $('##{rawJS btn0}').on('click', function(){
+                sent = true;
                 conn.send(input.value);
                 input.value = "--submitted code\n"+input.value;
                 console.log("clicked");
+                $('##{rawJS btn0}').prop('disabled', true);
               });
             |]
 
