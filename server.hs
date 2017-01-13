@@ -7,27 +7,21 @@ import Yesod.Core
 import Yesod.WebSockets 
 import Conduit 
 
---import Data.Conduit
 import Yesod.Form.Jquery
-import Control.Concurrent.Chan (Chan, dupChan, writeChan, newChan)
-import Control.Concurrent (forkOS, forkIO, threadDelay, killThread)
 import Data.Text (Text, pack, unpack)
 import Text.Julius (rawJS)
 import Blaze.ByteString.Builder.ByteString
 import Blaze.ByteString.Builder.Char.Utf8 (fromText, fromString)
-import Network.Wai.EventSource (ServerEvent (..), eventSourceAppChan)
 import Network.Wai (remoteHost)
 import Network.Socket.Internal (SockAddr(..))
 import Data.IP 
 
 import Data.Monoid ((<>))
 
-import Control.Monad.Trans.Resource (runResourceT, register)
 import Control.Monad
-import Control.Monad.Loops
+import Control.Monad.Loops (whileM_)
 
 import System.IO
-import System.Posix.IO
 import System.Posix.Process 
 import System.Exit ( ExitCode(ExitFailure) )
 import qualified System.Process as P
@@ -35,7 +29,7 @@ import qualified System.Process as P
 import System.Directory
 import qualified Control.Concurrent.Async.Lifted as Async
 
-data App = App (Chan ServerEvent)
+data App = App
 
 pageTitleText = "Browser Haskell" :: Text
 
@@ -69,11 +63,6 @@ instance YesodJquery App where
     urlJqueryJs _ = Right $ "http://ajax.googleapis.com/"
                     <>"ajax/libs/jquery/1.8.3/jquery.min.js"
 
-data CodeResponse = CodeResponse 
-     { codeStr :: Text
-     , append :: Bool
-     } deriving Show
-
 --Allows client to check if server is running locally
 getLocalR :: Handler TypedContent
 getLocalR = do
@@ -88,50 +77,57 @@ sockAddrToIP sockAddr = case sockAddr of
     SockAddrInet _port hostAddress -> IPv4 $ fromHostAddress hostAddress
     SockAddrInet6 _port _flowInfo hostAddress6 _scopeID -> IPv6 $ fromHostAddress6 hostAddress6
 
+getNewCode = do
+  code <- receiveData
+  let inpStr = unpack code
+  if (inpStr=="{*--EOF--*}")
+    then getNewCode
+    else return inpStr
+
 runCode :: String -> WebSocketsT Handler ()
 runCode ip = do
   sendTextData ("Waiting for code..." :: Text)
   
-  code <- receiveData
-  sendTextData ("{*clear*}" :: Text)
-  
-  let inpStr = unpack code
-  let cleanIP = filter (`elem` ['0'..'9']) ip
-  liftIO $ putStrLn $ cleanIP
-  liftIO $ putStr inpStr
-  --todo make a function to modify input str (maybe do this with js) such that
-  --  stdout is not buffered
+  inpStr <- getNewCode
 
-  --todo make a uniqe file name perclient
+  sendTextData ("{*clear*}" :: Text)
+
+  let cleanIP = filter (`elem` ['0'..'9']) ip
+  here <- liftIO $ getCurrentDirectory  
+  let tempFolder = here++"/temp"
+  let fileName = cleanIP++".hs"
+
   liftIO $ do
-    h <- openFile ("temp/"++cleanIP++".hs") WriteMode
+    h <- openFile (tempFolder++"/"++fileName) WriteMode
     hPutStr h inpStr
     hClose h
-  --todo programitcally set temp path
-  let command = "docker run -iv ~/Desktop/browserHaskell/temp:/workspace docker-haskell runhaskell /workspace/"++cleanIP++".hs" :: String
-  (Just hIn, Just hOut, _, p) <- 
+
+  let command = "timeout 300 docker run -iv "++tempFolder++":/workspace docker-haskell runhaskell /workspace/"++fileName :: String
+  (Just hIn, Just hOut, Just hErr, p) <- 
     liftIO $ P.createProcess (P.shell command){ P.std_out = P.CreatePipe
-                                              , P.std_in = P.CreatePipe }
+                                              , P.std_in = P.CreatePipe 
+                                              , P.std_err = P.CreatePipe }
 
   liftIO $ hSetBuffering hOut NoBuffering
+  liftIO $ hSetBuffering hErr NoBuffering
   liftIO $ hSetBuffering hIn NoBuffering
 
-  --todo support for stderr
   reader <- Async.async (whileM_ (fmap not $ liftIO . hIsEOF $ hOut) $ do
           l <- liftIO $ hGetChar hOut
-          sendTextData $ pack (l:[])
-          return ()) 
+          sendTextData $ pack (l:[])) 
+  errReader <- Async.async (whileM_ (fmap not $ liftIO . hIsEOF $ hErr) $ do
+          l <- liftIO $ hGetLine hErr
+          sendTextData $ pack ("<p style='color:red'>"++l++"</p>"))
   writer <- Async.async $ myInp hIn  
 
   Async.wait reader
+  Async.wait errReader
 
   e <- liftIO $ P.waitForProcess p
   case e of 
     ExitFailure 124 -> do
-      sendTextData ("{*clear*}" :: Text)
       sendTextData ("Program timed out! (>5s)\n" :: Text)
     ExitFailure n -> do
-      sendTextData ("{*clear*}" :: Text)
       sendTextData $ pack ("Program failed with exit code: "++show n++"\n")
     _ -> do 
       return ()
@@ -142,11 +138,12 @@ runCode ip = do
   liftIO $ removeFile $ "temp/"++cleanIP++".hs"
   runCode ip
 
+myInp :: Handle -> WebSocketsT Handler ()
 myInp hIn = do 
   newInp <- receiveData
   let newInpStr = unpack newInp
   case newInpStr of
-    "{*--EOF--*}" -> return()
+    "{*--EOF--*}" -> liftIO $ hClose hIn
     _ -> do
       liftIO $ putStrLn newInpStr
       liftIO $ hPutStrLn hIn newInpStr
@@ -160,8 +157,8 @@ postEditorR = do
               let strData = map (\(x, y) -> (unpack x, unpack y)) rb
               liftIO $ print strData
               if fst (head strData) == "code" then 
-                eventSourceW $ snd . head $ strData 
-              else eventSourceW defaultMessage
+                editorSource $ snd . head $ strData 
+              else editorSource defaultMessage
 
 getEditorR :: Handler Html
 getEditorR = do
@@ -170,40 +167,36 @@ getEditorR = do
   webSockets $ runCode ip
   defaultLayout $ do
               setTitle $ toHtml pageTitleText
-              eventSourceW defaultMessage
+              editorSource defaultMessage
 
 defaultMessage :: String
-defaultMessage = "import System.IO\nmain = do\n    hSetBuffering stdout NoBuffering\n    --Enter Code Here!"
+defaultMessage = "import System.IO\nmain = do\n    hSetBuffering stdout NoBuffering\n    hSetBuffering stderr NoBuffering\n    --Enter Code Here!"
 
-getHomeR :: Handler Html
-getHomeR = do 
-  defaultLayout $ do
-    setTitle $ toHtml pageTitleText
-    homePage
-
-homePage = do
+editorSource str = do
+  receptacle0 <- newIdent
+  receptacle1 <- newIdent
+  btn0 <- newIdent 
   [whamlet| $newline never
-            Welcome to browserHaskell!|]
-
-
---todo modify the following html/css/js to make it 
---suitable for the application
-onlyEventName :: Text
-onlyEventName = "newFib"
-
-eventSourceW str = do
-  receptacle0 <- newIdent -- css id for output div 0
-  btn0 <- newIdent -- css id for output div 1
-  [whamlet| $newline never
-            <div ##{receptacle0}>
-            <form #form>
-              <input #ioinput>
-            <textarea #input style=resize:none cols=90 rows=50>#{str}
-            <br>
-            <button ##{btn0}>Run
+            <div ##{receptacle1} .outdiv>
+              <textarea #input style=resize:none cols=90 rows=50>#{str}
+              <br>
+              <button ##{btn0}>Run
+            <div .outdiv>
+              <div ##{receptacle0}>
+              <form #form>
+                <input #ioinput>
+              <button #close disabled> Close input
               |]
 
-  -- the JavaScript ServerEvent handling code
+  toWidget [lucius|
+           .outdiv
+           {
+             float:left;
+             display: inline-block;
+             width:50%;
+           }
+         |]
+
   toWidget [julius|
             var isCode = false;
             var url = document.URL;
@@ -224,8 +217,9 @@ eventSourceW str = do
             conn.onmessage = function(e) {
               if(e.data=="  --Done\n"){
                 sent = false;
-                conn.send("{*--EOF--*}");
+                sendEof();
                 $('##{rawJS btn0}').prop('disabled', false);
+                $('#close').prop('disabled', true);
               }
               if(e.data=="{*clear*}")
                 $('##{rawJS receptacle0}').text("");
@@ -245,32 +239,32 @@ eventSourceW str = do
             $('##{rawJS btn0}').on('click', function(){
                 sent = true;
                 conn.send(input.value);
-                input.value = "--submitted code\n"+input.value;
-                console.log("clicked");
                 $('##{rawJS btn0}').prop('disabled', true);
+                $('#close').prop('disabled', false);
               });
+
+            $('#close').on('click', function(){
+                if(sent){
+                  sendEof();
+                }
+              });
+
+            function sendEof(){
+              console.log('closing stdin');
+              conn.send("{*--EOF--*}");
+            }
             |]
 
---todo get rid of the following 'placeholder' fuctions
-fibs :: [Int]
-fibs = 1 : 1 : zipWith (+) fibs (tail fibs)
+getHomeR :: Handler Html
+getHomeR = do 
+  defaultLayout $ do
+    setTitle $ toHtml pageTitleText
+    homePage
 
-talk :: Chan ServerEvent -> Int -> IO ()
-talk ch n = do
-  forM_ (zip [1..] fibs) $ \fib -> do
-    writeChan ch $ mkServerEvent "newFib" (snd fib) $ pack ("Fib"++(show . fst) fib++": ")
-    threadDelay micros
-    where micros = 1*(10^6)
-          mkServerEvent evName evId evData =
-              let mEvName = case evName of
-                                 "" -> Nothing
-                                 _  -> (Just $ fromText evName)
-                  mEvId   = Just $ fromString $ show evId
-                  evPayload = [(fromText evData <> fromString (show evId))]
-              in ServerEvent mEvName mEvId evPayload
+homePage = do
+  [whamlet| $newline never
+            Welcome to browserHaskell!|]
 
---todo figure out if I can usethe global channel for something
 main = do
-    ch <- newChan
     putStrLn "Now running on http://127.0.0.1:3000/editor"
-    warp 3000 $ App ch
+    warp 3000 $ App

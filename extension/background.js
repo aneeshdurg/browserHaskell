@@ -45,21 +45,10 @@ chrome.runtime.onInstalled.addListener(function() {
     });
 });
 
-chrome.runtime.onInstalled.addListener(function() {
-    chrome.contextMenus.create({
-        title: 'Append to Haskell RC',
-        id: 'haskMenu2', // you'll use this in the handler function to identify this context menu item
-        contexts: ['all'],
-    });
-});
-
 chrome.contextMenus.onClicked.addListener(function(info, tab) {
     if (info.menuItemId === "haskMenu1") {
     	chrome.tabs.sendMessage(tab.id, {method: "getSelection"}, function(response){
             sendCode(response.data);
         });
-    }
-    if (info.menuItemId === "haskMenu2") {
-    	sendCode(info, true);
     }
 });
