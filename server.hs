@@ -145,7 +145,6 @@ myInp hIn = do
   case newInpStr of
     "{*--EOF--*}" -> liftIO $ hClose hIn
     _ -> do
-      liftIO $ putStrLn newInpStr
       liftIO $ hPutStrLn hIn newInpStr
       myInp hIn
 
@@ -178,14 +177,16 @@ editorSource str = do
   btn0 <- newIdent 
   [whamlet| $newline never
             <div ##{receptacle1} .outdiv>
-              <textarea #input style=resize:none cols=90 rows=50>#{str}
+              <textarea #input autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" style=resize:none cols=90 rows=50>#{str}
               <br>
               <button ##{btn0}>Run
-            <div .outdiv>
-              <div ##{receptacle0}>
-              <form #form>
-                <input #ioinput>
-              <button #close disabled> Close input
+            <div #container .console>
+              <div #textcontainer .consolet>
+                <code #output>
+                <div ##{receptacle0}>
+              <form #form .down>
+                <input #ioinput autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+              <button #close disabled .downbtn> Close input
               |]
 
   toWidget [lucius|
@@ -194,6 +195,45 @@ editorSource str = do
              float:left;
              display: inline-block;
              width:50%;
+           }
+           .console
+           {
+             float:left;
+             display: inline-block;
+             width:50%;
+             height:500px;
+             background-color: black;
+             color:gray;
+             font-size:20px;
+             position:relative;
+           }
+           .consolet
+           {
+             float:left;
+             display: inline-block;
+             width:100%;
+             height:450px;
+             background-color: black;
+             color:gray;
+             overflow:auto;
+             font-size:20px;
+             position:relative;
+           }
+           .down{
+            position:absolute;
+            bottom:10px;
+            left:10px;
+          }
+          .downbtn{
+            position:absolute;
+            bottom:10px;
+            left:225px;
+          }
+
+           html, body { 
+             margin:0; 
+             padding:0; 
+             height:100%; 
            }
          |]
 
@@ -221,10 +261,17 @@ editorSource str = do
                 $('##{rawJS btn0}').prop('disabled', false);
                 $('#close').prop('disabled', true);
               }
-              if(e.data=="{*clear*}")
+              if(e.data=="{*clear*}"){
+                $('#output').text("");
                 $('##{rawJS receptacle0}').text("");
+              }
               else{
-                $('##{rawJS receptacle0}').append(e.data.replace("\n", "<br>"));
+                if(sent)
+                  $('#output').append(e.data.replace("\n", "<br>"));
+                else
+                  $('##{rawJS receptacle0}').append(e.data.replace("\n", "<br>"));
+                var elem = document.getElementById('textcontainer');
+                elem.scrollTop = elem.scrollHeight;
               }
             }
             
