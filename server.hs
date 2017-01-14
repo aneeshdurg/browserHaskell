@@ -125,8 +125,6 @@ runCode ip = do
 
   e <- liftIO $ P.waitForProcess p
   case e of 
-    ExitFailure 124 -> do
-      sendTextData ("Program timed out! (>5s)\n" :: Text)
     ExitFailure n -> do
       sendTextData $ pack ("Program failed with exit code: "++show n++"\n")
     _ -> do 
@@ -194,14 +192,14 @@ editorSource str = do
            {
              float:left;
              display: inline-block;
-             width:50%;
+             width:800px;
            }
            .console
            {
              float:left;
              display: inline-block;
-             width:50%;
-             height:500px;
+             width:800px;
+             height:750px;
              background-color: black;
              color:gray;
              font-size:20px;
@@ -212,7 +210,7 @@ editorSource str = do
              float:left;
              display: inline-block;
              width:100%;
-             height:450px;
+             height:700px;
              background-color: black;
              color:gray;
              overflow:auto;
