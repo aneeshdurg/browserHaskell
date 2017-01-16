@@ -154,7 +154,7 @@ postEditorR = do
               let strData = map (\(x, y) -> (unpack x, unpack y)) rb
               liftIO $ print strData
               if fst (head strData) == "code" then 
-                editorSource $ snd . head $ strData 
+                editorSource $ defaultMessage ++"\n" ++ (snd . head $ strData) 
               else editorSource defaultMessage
 
 getEditorR :: Handler Html
