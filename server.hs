@@ -94,7 +94,7 @@ runCode ip = do
 
   let cleanIP = filter (`elem` ['0'..'9']) ip
   here <- liftIO $ getCurrentDirectory  
-  let tempFolder = if here=="/" then "temp" else here++"/temp"
+  let tempFolder = if here=="/" then "/temp" else here++"/temp"
   let fileName = cleanIP++".hs"
 
   liftIO $ putStrLn tempFolder
@@ -135,7 +135,7 @@ runCode ip = do
 
   Async.wait writer
 
-  liftIO $ removeFile $ "temp/"++cleanIP++".hs"
+  liftIO $ removeFile $ tempFolder++"/"++fileName
   runCode ip
 
 myInp :: Handle -> WebSocketsT Handler ()
