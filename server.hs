@@ -94,8 +94,10 @@ runCode ip = do
 
   let cleanIP = filter (`elem` ['0'..'9']) ip
   here <- liftIO $ getCurrentDirectory  
-  let tempFolder = here++"/temp"
+  let tempFolder = if here=="/" then "temp" else here++"/temp"
   let fileName = cleanIP++".hs"
+
+  liftIO $ putStrLn tempFolder
 
   liftIO $ do
     h <- openFile (tempFolder++"/"++fileName) WriteMode
@@ -312,4 +314,4 @@ homePage = do
 
 main = do
     putStrLn "Now running on http://127.0.0.1:3000/editor"
-    warp 3000 $ App
+    warp 80 $ App

@@ -4,7 +4,7 @@ function sendCode(info, append)
   fetch(searchstring, append);
 }
 
-var siteUrl = "http://35.160.216.80:3000/editor"
+var siteUrl = "http://35.166.206.154:3000/editor"
 var iter = 0;
 function fetch(data, append) {
 	//var a = append ? encodeURIComponent("{**haskAppend=true**}"):"";
@@ -42,7 +42,7 @@ chrome.runtime.onInstalled.addListener(function() {
           url: "http://127.0.0.1:3000/localhost",
           success: function(valid){    
             if ( valid == "browserHaskell-localhost" ){ 
-                console.log("found local"); 
+                console.log("found local");g 
                 siteUrl = "http://127.0.0.1:3000/editor";
             }
           },
