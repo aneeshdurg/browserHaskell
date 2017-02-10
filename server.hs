@@ -1,33 +1,37 @@
-{-# LANGUAGE OverloadedStrings, TypeFamilies, QuasiQuotes,
-  TemplateHaskell, FlexibleInstances, MultiParamTypeClasses,
-  FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE QuasiQuotes           #-}
+{-# LANGUAGE TemplateHaskell       #-}
+{-# LANGUAGE TypeFamilies          #-}
 
-import Yesod
-import Yesod.Core
-import Yesod.WebSockets 
-import Conduit 
+import           Conduit
+import           Yesod
+import           Yesod.Core
+import           Yesod.WebSockets
 
-import Yesod.Form.Jquery
-import Data.Text (Text, pack, unpack)
-import Text.Julius (rawJS)
-import Blaze.ByteString.Builder.ByteString
-import Blaze.ByteString.Builder.Char.Utf8 (fromText, fromString)
-import Network.Wai (remoteHost)
-import Network.Socket.Internal (SockAddr(..))
-import Data.IP 
+import           Blaze.ByteString.Builder.ByteString
+import           Blaze.ByteString.Builder.Char.Utf8  (fromString, fromText)
+import           Data.IP
+import           Data.Text                           (Text, pack, unpack)
+import           Network.Socket.Internal             (SockAddr (..))
+import           Network.Wai                         (remoteHost)
+import           Text.Julius                         (rawJS)
+import           Yesod.Form.Jquery
 
-import Data.Monoid ((<>))
+import           Data.Monoid                         ((<>))
 
-import Control.Monad
-import Control.Monad.Loops (whileM_)
+import           Control.Monad
+import           Control.Monad.Loops                 (whileM_)
 
-import System.IO
-import System.Posix.Process 
-import System.Exit ( ExitCode(ExitFailure) )
-import qualified System.Process as P
+import           System.Exit                         (ExitCode (ExitFailure))
+import           System.IO
+import           System.Posix.Process
+import qualified System.Process                      as P
 
-import System.Directory
-import qualified Control.Concurrent.Async.Lifted as Async
+import qualified Control.Concurrent.Async.Lifted     as Async
+import           System.Directory
 
 data App = App
 
@@ -67,7 +71,7 @@ instance YesodJquery App where
 getLocalR :: Handler TypedContent
 getLocalR = do
   addHeader "Access-Control-Allow-Origin" "*"
-  return $ TypedContent "text" $ toContent $ 
+  return $ TypedContent "text" $ toContent $
     ("browserHaskell-localhost" :: [Char])
 
 --thanks stackoverflow:
@@ -87,13 +91,13 @@ getNewCode = do
 runCode :: String -> WebSocketsT Handler ()
 runCode ip = do
   sendTextData ("Waiting for code..." :: Text)
-  
+
   inpStr <- getNewCode
 
   sendTextData ("{*clear*}" :: Text)
 
   let cleanIP = filter (`elem` ['0'..'9']) ip
-  here <- liftIO $ getCurrentDirectory  
+  here <- liftIO $ getCurrentDirectory
   let tempFolder = if here=="/" then "/temp" else here++"/temp"
   let fileName = cleanIP++".hs"
 
@@ -105,9 +109,9 @@ runCode ip = do
     hClose h
 
   let command = "timeout 300 docker run -iv "++tempFolder++":/workspace docker-haskell runhaskell /workspace/"++fileName :: String
-  (Just hIn, Just hOut, Just hErr, p) <- 
+  (Just hIn, Just hOut, Just hErr, p) <-
     liftIO $ P.createProcess (P.shell command){ P.std_out = P.CreatePipe
-                                              , P.std_in = P.CreatePipe 
+                                              , P.std_in = P.CreatePipe
                                               , P.std_err = P.CreatePipe }
 
   liftIO $ hSetBuffering hOut NoBuffering
@@ -116,22 +120,22 @@ runCode ip = do
 
   reader <- Async.async (whileM_ (fmap not $ liftIO . hIsEOF $ hOut) $ do
           l <- liftIO $ hGetChar hOut
-          sendTextData $ pack (l:[])) 
+          sendTextData $ pack (l:[]))
   errReader <- Async.async (whileM_ (fmap not $ liftIO . hIsEOF $ hErr) $ do
           l <- liftIO $ hGetLine hErr
           sendTextData $ pack ("<p style='color:red'>"++l++"</p>"))
-  writer <- Async.async $ myInp hIn  
+  writer <- Async.async $ myInp hIn
 
   Async.wait reader
   Async.wait errReader
 
   e <- liftIO $ P.waitForProcess p
-  case e of 
+  case e of
     ExitFailure n -> do
       sendTextData $ pack ("Program failed with exit code: "++show n++"\n")
-    _ -> do 
+    _ -> do
       return ()
-  sendTextData ("  --Done\n" :: Text) 
+  sendTextData ("  --Done\n" :: Text)
 
   Async.wait writer
 
@@ -139,7 +143,7 @@ runCode ip = do
   runCode ip
 
 myInp :: Handle -> WebSocketsT Handler ()
-myInp hIn = do 
+myInp hIn = do
   newInp <- receiveData
   let newInpStr = unpack newInp
   case newInpStr of
@@ -155,8 +159,8 @@ postEditorR = do
               (rb,_) <- runRequestBody
               let strData = map (\(x, y) -> (unpack x, unpack y)) rb
               liftIO $ print strData
-              if fst (head strData) == "code" then 
-                editorSource $ defaultMessage ++"\n" ++ (snd . head $ strData) 
+              if fst (head strData) == "code" then
+                editorSource $ defaultMessage ++"\n" ++ (snd . head $ strData)
               else editorSource defaultMessage
 
 getEditorR :: Handler Html
@@ -174,9 +178,10 @@ defaultMessage = "import System.IO\nmain = do\n    hSetBuffering stdout NoBuffer
 editorSource str = do
   receptacle0 <- newIdent
   receptacle1 <- newIdent
-  btn0 <- newIdent 
+  btn0 <- newIdent
   [whamlet| $newline never
             <div ##{receptacle1} .outdiv>
+              <p> Welcome to browserHaskell! See the code <a href="https://github.com/Dank-Scripts/browserHaskell/">here</a> and the extension <a href="https://goo.gl/VMZxrM">here</a>
               <textarea #input autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" style=resize:none cols=90 rows=50>#{str}
               <br>
               <button ##{btn0}>Run
@@ -230,10 +235,10 @@ editorSource str = do
             left:225px;
           }
 
-           html, body { 
-             margin:0; 
-             padding:0; 
-             height:100%; 
+           html, body {
+             margin:0;
+             padding:0;
+             height:100%;
            }
          |]
 
@@ -274,10 +279,10 @@ editorSource str = do
                 elem.scrollTop = elem.scrollHeight;
               }
             }
-            
+
             form.addEventListener("submit", function(e){
                 e.preventDefault();
-                if(sent){ 
+                if(sent){
                   conn.send(io.value);
                   io.value = '';
                 }
@@ -300,10 +305,18 @@ editorSource str = do
               console.log('closing stdin');
               conn.send("{*--EOF--*}");
             }
+
+            (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+            (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+            m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+            })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+              
+            ga('create', 'UA-91792256-1', 'auto');
+            ga('send', 'pageview');
             |]
 
 getHomeR :: Handler Html
-getHomeR = do 
+getHomeR = do
   defaultLayout $ do
     setTitle $ toHtml pageTitleText
     homePage

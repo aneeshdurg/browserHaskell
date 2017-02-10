@@ -4,13 +4,13 @@ function sendCode(info, append)
   fetch(searchstring, append);
 }
 
-var siteUrl = "http://35.166.206.154:3000/editor"
+var siteUrl = "http://www.browserhaskell.tk/editor"
 var iter = 0;
 function fetch(data, append) {
 	//var a = append ? encodeURIComponent("{**haskAppend=true**}"):"";
 
     //check if the server is running on localhost
-    console.log("sending to server");
+    //console.log("sending to server");
     var form = $('<form></form>');
     form.attr("method", "post")
     form.attr("action", siteUrl);
@@ -32,7 +32,7 @@ function fetch(data, append) {
 
 chrome.runtime.onInstalled.addListener(function() {
     chrome.contextMenus.create({
-        title: 'Haskell RC',
+        title: 'send to Browser Haskell',
         id: 'haskMenu1', // you'll use this in the handler function to identify this context menu item
         contexts: ['all'],
     });
@@ -42,7 +42,7 @@ chrome.runtime.onInstalled.addListener(function() {
           url: "http://127.0.0.1:3000/localhost",
           success: function(valid){    
             if ( valid == "browserHaskell-localhost" ){ 
-                console.log("found local");g 
+                //console.log("found local");g 
                 siteUrl = "http://127.0.0.1:3000/editor";
             }
           },
@@ -53,7 +53,7 @@ chrome.runtime.onInstalled.addListener(function() {
 chrome.contextMenus.onClicked.addListener(function(info, tab) {
     if (info.menuItemId === "haskMenu1") {
     	chrome.tabs.sendMessage(tab.id, {method: "getSelection"}, function(response){
-            console.log(response);
+            //console.log(response);
             sendCode(response.data);
         });
     }
