@@ -2,6 +2,8 @@
 
 Right click on haskell code to play with it on chrome/chromium!
 
+Try it out without the extension [here](http://www.browserhaskell.tk/editor)
+
 To test locally:
 
 + `chmod +x setup.sh`
